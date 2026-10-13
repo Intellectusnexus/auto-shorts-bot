@@ -1,6 +1,5 @@
 import os
 import time
-import asyncio
 import requests
 import random
 import urllib.parse
@@ -10,7 +9,7 @@ from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-import edge_tts
+from gtts import gTTS
 
 def get_youtube_service():
     creds = Credentials(
@@ -60,7 +59,10 @@ def generate_ai_visual(topic):
     encoded_prompt = urllib.parse.quote(prompt)
     image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
     
-    response = requests.get(image_url, timeout=60)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(image_url, headers=headers, timeout=60)
+    response.raise_for_status()
+    
     img_filename = "ai_frame.jpg"
     with open(img_filename, "wb") as f:
         f.write(response.content)
@@ -68,22 +70,24 @@ def generate_ai_visual(topic):
     print("AI Visual generated successfully!")
     return img_filename
 
-async def generate_voice(text, filename="voice.mp3"):
-    communicate = edge_tts.Communicate(text, "en-IN-PrabhatNeural")
-    await communicate.save(filename)
+def generate_voice(text, filename="voice.mp3"):
+    print("Generating voiceover...")
+    # Uses Google TTS with an Indian top-level domain for local accent
+    tts = gTTS(text=text, lang='en', tld='co.in')
+    tts.save(filename)
     return filename
 
 def generate_short(trending_title):
     print("Generating Short...")
     
     script = f"Trending now in India! Everyone is watching: {trending_title}. Don't miss out on today's most popular video!"
-    asyncio.run(generate_voice(script))
     
+    generate_voice(script)
     img_path = generate_ai_visual(trending_title)
+    
     audio = AudioFileClip("voice.mp3")
     duration = audio.duration + 1
     
-    # Creates smooth cinematic camera zoom motion on the AI background
     raw_clip = ImageClip(img_path).set_duration(duration)
     animated_bg = raw_clip.resize(lambda t: 1 + 0.03 * t).set_position(('center', 'center'))
     background = CompositeVideoClip([animated_bg], size=(1080, 1920)).set_duration(duration)
