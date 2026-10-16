@@ -60,19 +60,31 @@ def generate_ai_visual(topic):
     image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
     
     headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(image_url, headers=headers, timeout=60)
-    response.raise_for_status()
-    
     img_filename = "ai_frame.jpg"
-    with open(img_filename, "wb") as f:
-        f.write(response.content)
-        
-    print("AI Visual generated successfully!")
-    return img_filename
+    
+    for attempt in range(3):
+        try:
+            print(f"Image generation attempt {attempt + 1}/3...")
+            # Increased timeout to 120 seconds to prevent Read timed out errors
+            response = requests.get(image_url, headers=headers, timeout=120)
+            response.raise_for_status()
+            
+            with open(img_filename, "wb") as f:
+                f.write(response.content)
+                
+            print("AI Visual generated successfully!")
+            return img_filename
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Error on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                print("Retrying in 10 seconds...")
+                time.sleep(10)
+            else:
+                raise Exception("Failed to generate AI visual after 3 attempts.")
 
 def generate_voice(text, filename="voice.mp3"):
     print("Generating voiceover...")
-    # Uses Google TTS with an Indian top-level domain for local accent
     tts = gTTS(text=text, lang='en', tld='co.in')
     tts.save(filename)
     return filename
@@ -165,4 +177,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Critical Error: {e}")
         exit(1)
-        
