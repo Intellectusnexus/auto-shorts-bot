@@ -59,13 +59,12 @@ def generate_ai_visual(topic):
     encoded_prompt = urllib.parse.quote(prompt)
     image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
     
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     img_filename = "ai_frame.jpg"
     
     for attempt in range(3):
         try:
             print(f"Image generation attempt {attempt + 1}/3...")
-            # Increased timeout to 120 seconds to prevent Read timed out errors
             response = requests.get(image_url, headers=headers, timeout=120)
             response.raise_for_status()
             
@@ -81,7 +80,8 @@ def generate_ai_visual(topic):
                 print("Retrying in 10 seconds...")
                 time.sleep(10)
             else:
-                raise Exception("Failed to generate AI visual after 3 attempts.")
+                print("Warning: Failed to generate AI visual after 3 attempts. Utilizing fallback background.")
+                return None
 
 def generate_voice(text, filename="voice.mp3"):
     print("Generating voiceover...")
@@ -100,9 +100,13 @@ def generate_short(trending_title):
     audio = AudioFileClip("voice.mp3")
     duration = audio.duration + 1
     
-    raw_clip = ImageClip(img_path).set_duration(duration)
-    animated_bg = raw_clip.resize(lambda t: 1 + 0.03 * t).set_position(('center', 'center'))
-    background = CompositeVideoClip([animated_bg], size=(1080, 1920)).set_duration(duration)
+    if img_path:
+        raw_clip = ImageClip(img_path).set_duration(duration)
+        animated_bg = raw_clip.resize(lambda t: 1 + 0.03 * t).set_position(('center', 'center'))
+        background = CompositeVideoClip([animated_bg], size=(1080, 1920)).set_duration(duration)
+    else:
+        # Fallback dark animated background if API hits a 402 Error
+        background = ColorClip(size=(1080, 1920), color=(15, 15, 35)).set_duration(duration)
     
     text_clip = TextClip(
         trending_title,
@@ -177,3 +181,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Critical Error: {e}")
         exit(1)
+        
