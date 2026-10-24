@@ -6,6 +6,7 @@ import urllib.parse
 import edge_tts
 import asyncio
 import subprocess
+import re
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
@@ -29,8 +30,14 @@ def get_trending_data(youtube):
         request = youtube.videos().list(part="snippet", chart="mostPopular", regionCode="IN", maxResults=10)
         response = request.execute()
         selected = random.choice(response["items"][:5])
-        original_title = selected["snippet"]["title"].replace("'", "")
-        strong_title = original_title[:70] + ("..." if len(original_title) > 70 else "")
+        
+        original_title = selected["snippet"]["title"]
+        
+        # Sanitize text for FFmpeg: strip emojis and replace colons
+        clean_title = re.sub(r'[^\x00-\x7F]+', '', original_title)
+        clean_title = clean_title.replace("'", "").replace(":", "-").strip()
+        
+        strong_title = clean_title[:70] + ("..." if len(clean_title) > 70 else "")
         return strong_title, original_title, ["#trending", "#viral", "#shorts"], "24"
     except Exception:
         return "The craziest viral moment of the week", "viral trending topic", ["#trending", "#viral"], "24"
