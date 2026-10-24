@@ -6,7 +6,6 @@ import urllib.parse
 import edge_tts
 import asyncio
 import subprocess
-import fal_client
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
@@ -29,78 +28,63 @@ def get_trending_data(youtube):
     try:
         request = youtube.videos().list(part="snippet", chart="mostPopular", regionCode="IN", maxResults=10)
         response = request.execute()
-        
         selected = random.choice(response["items"][:5])
         original_title = selected["snippet"]["title"].replace("'", "")
-        
         strong_title = original_title[:70] + ("..." if len(original_title) > 70 else "")
         return strong_title, original_title, ["#trending", "#viral", "#shorts"], "24"
-    except Exception as e:
-        print(f"Failed to fetch trend: {e}")
-        fallback = "The craziest viral moment of the week"
-        return fallback, fallback, ["#trending", "#viral", "#shorts"], "24"
+    except Exception:
+        return "The craziest viral moment of the week", "viral trending topic", ["#trending", "#viral"], "24"
 
 def get_explainer_script(strong_title, original_topic):
     return [
-        {"text": f"Everyone is talking about {strong_title}.", "visual_prompt": f"Cinematic wide shot, epic atmosphere, representing {original_topic}"},
-        {"text": "But most people completely missed the craziest detail hidden in plain sight.", "visual_prompt": "Camera zooming in fast, glowing elements, revealing a secret detail"},
-        {"text": "When you look closely, it completely changes how you see the whole thing.", "visual_prompt": "Dramatic lighting shift, mind-blowing revelation, dynamic angles, highly detailed"},
-        {"text": "What do you actually think about this? Drop a comment and subscribe for more.", "visual_prompt": "High energy cinematic outro, neon lights, glitch transitions"}
+        {"text": f"Everyone is talking about {strong_title}.", "prompt": f"Cinematic wide shot, {original_topic}, epic lighting"},
+        {"text": "But most people completely missed the craziest detail hidden in plain sight.", "prompt": f"Close up, mysterious hidden detail about {original_topic}, glowing"},
+        {"text": "When you look closely, it completely changes how you see the whole thing.", "prompt": f"Mind blowing revelation, {original_topic}, dramatic shadows"},
+        {"text": "What do you actually think about this? Drop a comment and subscribe for more.", "prompt": f"Cyberpunk glitch, hacker matrix, neon lights"}
     ]
 
 async def generate_voice(text, filename):
     communicate = edge_tts.Communicate(text, voice="en-IN-NeerjaNeural", rate="+15%")
     await communicate.save(filename)
 
-def extract_last_frame(video_file, output_image):
-    subprocess.run(["ffmpeg", "-y", "-sseof", "-0.5", "-i", video_file, "-update", "1", "-q:v", "2", output_image], check=True)
+def get_ai_image(prompt, filename):
+    seed = random.randint(1, 999999)
+    safe_prompt = urllib.parse.quote(f"Vertical 9:16, {prompt}, highly detailed, 8k")
+    image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1080&height=1920&nologo=true&model=flux&seed={seed}"
+    try:
+        with open(filename, "wb") as f:
+            f.write(requests.get(image_url, timeout=30).content)
+    except Exception:
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=0x080814:s=1080x1920", "-vframes", "1", filename], check=True)
 
 async def generate_short(strong_title, original_topic):
     script_parts = get_explainer_script(strong_title, original_topic)
     clips = []
     
-    print("Generating base establishing scene...")
-    safe_topic = urllib.parse.quote(original_topic[:50])
-    encoded_prompt = f"Cinematic vertical 9:16 portrait, viral trending moment, {safe_topic}, epic atmosphere, highly detailed, 8k"
-    base_img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(encoded_prompt)}?width=1080&height=1920&nologo=true&model=flux"
-    current_frame = "current_frame.jpg"
-    
-    with open(current_frame, "wb") as f:
-        f.write(requests.get(base_img_url).content)
-
     for i, part in enumerate(script_parts):
-        print(f"Generating Scene {i+1}/4 (Chaining from previous frame)...")
+        print(f"Generating Animated Infographic Scene {i+1}/4...")
         audio_file = f"voice_{i}.mp3"
-        raw_video = f"raw_video_{i}.mp4"
+        img_file = f"image_{i}.jpg"
         clip_file = f"clip_{i}.mp4"
         
         await generate_voice(part["text"], audio_file)
+        await asyncio.to_thread(get_ai_image, part["prompt"], img_file)
         
-        uploaded_image_url = fal_client.upload_file(current_frame)
-        
-        try:
-            result = fal_client.subscribe(
-                "fal-ai/kling-video/v1/standard/image-to-video",
-                arguments={
-                    "image_url": uploaded_image_url,
-                    "prompt": f"Cinematic vertical 9:16, {part['visual_prompt']}, highly detailed, 8k",
-                    "aspect_ratio": "9:16"
-                }
-            )
-            vid_data = requests.get(result['video']['url'], timeout=60).content
-            with open(raw_video, "wb") as f:
-                f.write(vid_data)
-        except Exception as e:
-            print(f"Kling API failed for scene {i}: {e}")
-            subprocess.run(["ffmpeg", "-y", "-loop", "1", "-i", current_frame, "-t", "5", "-c:v", "libx264", "-pix_fmt", "yuv420p", raw_video], check=True)
-
-        extract_last_frame(raw_video, current_frame)
-        
+        # This FFmpeg command builds the infographic:
+        # 1. Darkens and slowly zooms the background image.
+        # 2. Creates a real-time animated frequency bar chart (infographic) reacting to the voice.
+        # 3. Creates a continuous waveform line at the bottom.
+        # 4. Overlays the text, bars, and waveform onto the moving background.
         ffmpeg_cmd = [
-            "ffmpeg", "-y", "-i", raw_video, "-i", audio_file,
+            "ffmpeg", "-y", "-loop", "1", "-i", img_file, "-i", audio_file,
             "-filter_complex", 
-            f"[0:v]tpad=stop_mode=clone:stop_duration=3,scale=1080:1920,drawtext=text='{strong_title}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.35[v]",
-            "-map", "[v]", "-map", "1:a",
+            f"[0:v]zoompan=z='min(zoom+0.0015,1.5)':d=300:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',scale=1080:1920,colorlevels=romax=0.4:gomax=0.4:bomax=0.4[bg];"
+            f"[1:a]showfreqs=s=1080x500:mode=bar:colors=0x00FF99:ascale=log[barchart];"
+            f"[1:a]showwaves=s=1080x200:mode=cline:colors=0x00FFFF[wave];"
+            f"[bg][barchart]overlay=0:H/2-250[v1];"
+            f"[v1][wave]overlay=0:H-300[v2];"
+            f"[v2]drawtext=text='{strong_title}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.2[outv]",
+            "-map", "[outv]", "-map", "1:a",
             "-c:v", "libx264", "-preset", "ultrafast",
             "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest", clip_file
         ]
