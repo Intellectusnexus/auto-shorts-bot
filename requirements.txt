@@ -1,11 +1,6 @@
-moviepy==1.0.3
 google-api-python-client
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 requests
 edge-tts
-Pillow
-numpy
-imageio
-imageio-ffmpeg
