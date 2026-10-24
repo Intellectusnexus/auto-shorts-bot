@@ -6,6 +6,7 @@ import urllib.parse
 import edge_tts
 import asyncio
 import subprocess
+import fal_client
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
@@ -35,43 +36,64 @@ def get_trending_data(youtube):
     except Exception:
         original_title = random.choice(fallback_topics)
     
-    strong_title = f"The Dark Truth About {original_title.strip()}".replace("'", "") # Stripping quotes for FFmpeg compatibility
+    strong_title = f"The Dark Truth About {original_title.strip()}".replace("'", "") 
     return strong_title, original_title, ["#facts", "#psychology", "#space", "#shorts"], "27"
 
-async def generate_voice(text, filename="voice.mp3"):
+def get_explainer_script(strong_title, original_topic):
+    return [
+        {"text": f"{strong_title}. Most people have absolutely no idea about the hidden truth behind this.", "visual_prompt": f"wide shot, mysterious atmosphere, discovering {original_topic}"},
+        {"text": "For years, the mainstream narrative has kept the real facts completely hidden from the public eye.", "visual_prompt": "dark shadowy figures, classified documents, secret archive, moody lighting"},
+        {"text": f"But recent leaks reveal that {original_topic} is actually far more terrifying than anyone ever imagined.", "visual_prompt": f"dramatic close up, shocking revelation, cinematic lighting, {original_topic}"},
+        {"text": "The rabbit hole goes even deeper. Subscribe right now if you want to uncover the full story.", "visual_prompt": "glitch effect, dark hacker room, glowing screens, mysterious"}
+    ]
+
+async def generate_voice(text, filename):
     communicate = edge_tts.Communicate(text, voice="en-IN-NeerjaNeural")
     await communicate.save(filename)
-    return filename
 
-def generate_ai_visual(topic):
-    encoded_prompt = urllib.parse.quote(f"Cinematic vertical 9:16, dark atmosphere, highly detailed, moody, {topic}, no text")
-    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&model=flux"
+def generate_ai_video(prompt, filename):
     try:
-        response = requests.get(image_url, timeout=30)
-        with open("ai_frame.jpg", "wb") as f:
+        result = fal_client.subscribe(
+            "fal-ai/kling-video/v1/standard/text-to-video",
+            arguments={"prompt": f"Cinematic vertical 9:16, {prompt}, highly detailed, moody", "aspect_ratio": "9:16"}
+        )
+        response = requests.get(result['video']['url'], timeout=60)
+        with open(filename, "wb") as f:
             f.write(response.content)
-        return "ai_frame.jpg"
     except Exception:
-        # Fallback to a solid dark blue image if generation fails
-        subprocess.run(["ffmpeg", "-f", "lavfi", "-i", "color=c=0x080814:s=1080x1920", "-vframes", "1", "ai_frame.jpg"], check=True)
-        return "ai_frame.jpg"
+        # Fallback to 5 seconds of dark background if API fails
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=0x080814:s=1080x1920:d=5", filename], check=True)
 
 def generate_short(strong_title, original_topic):
-    script = f"{strong_title}. Most people have no idea this is true. Stay till the end."
-    asyncio.run(generate_voice(script))
-    img_path = generate_ai_visual(strong_title)
-    output = "short.mp4"
+    script_parts = get_explainer_script(strong_title, original_topic)
+    clips = []
     
-    # FFmpeg command replaces MoviePy completely. Renders instantly.
-    ffmpeg_cmd = [
-        "ffmpeg", "-y", "-loop", "1", "-framerate", "24", "-i", img_path, "-i", "voice.mp3",
-        "-vf", f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,drawtext=text='{strong_title}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.35",
-        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage",
-        "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest", output
-    ]
+    for i, part in enumerate(script_parts):
+        audio_file = f"voice_{i}.mp3"
+        video_file = f"video_{i}.mp4"
+        clip_file = f"clip_{i}.mp4"
+        
+        asyncio.run(generate_voice(part["text"], audio_file))
+        generate_ai_video(part["visual_prompt"], video_file)
+        
+        # -stream_loop -1 loops the 5s AI video until the audio finishes
+        ffmpeg_cmd = [
+            "ffmpeg", "-y", "-stream_loop", "-1", "-i", video_file, "-i", audio_file,
+            "-vf", f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,drawtext=text='{strong_title}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.35",
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest", clip_file
+        ]
+        subprocess.run(ffmpeg_cmd, check=True)
+        clips.append(clip_file)
+
+    with open("concat.txt", "w") as f:
+        for clip in clips:
+            f.write(f"file '{clip}'\n")
+            
+    final_output = "explainer_short.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "concat.txt", "-c", "copy", final_output], check=True)
     
-    subprocess.run(ffmpeg_cmd, check=True)
-    return output
+    return final_output
 
 def upload_video(youtube, video_file, title, hashtags, category_id):
     full_title = (f"{title} {' '.join(hashtags)}")[:97] + "..."
