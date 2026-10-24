@@ -49,12 +49,24 @@ async def generate_voice(text, filename):
 
 def get_ai_image(prompt, filename):
     seed = random.randint(1, 999999)
-    safe_prompt = urllib.parse.quote(f"Vertical 9:16, {prompt}, highly detailed, 8k")
+    # Slicing the prompt ensures the URL does not become too long and cause a server rejection
+    safe_prompt = urllib.parse.quote(f"Vertical 9:16, {prompt[:150]}, highly detailed, 8k")
     image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1080&height=1920&nologo=true&model=flux&seed={seed}"
+    
     try:
+        response = requests.get(image_url, timeout=30)
+        response.raise_for_status() # Force exception on 404/500 errors
+        
+        # Verify the returned content is actually an image before writing it
+        if 'image' not in response.headers.get('Content-Type', ''):
+            raise ValueError("API returned non-image data")
+            
         with open(filename, "wb") as f:
-            f.write(requests.get(image_url, timeout=30).content)
-    except Exception:
+            f.write(response.content)
+            
+    except Exception as e:
+        print(f"Image fetch failed ({e}). Using synthetic fallback.")
+        # Generates a valid deep blue solid color JPEG so FFmpeg doesn't crash
         subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=0x080814:s=1080x1920", "-vframes", "1", filename], check=True)
 
 async def generate_short(strong_title, original_topic):
@@ -62,7 +74,7 @@ async def generate_short(strong_title, original_topic):
     clips = []
     
     for i, part in enumerate(script_parts):
-        print(f"Generating Animated Infographic Scene {i+1}/4...")
+        print(f"Generating Optimized Infographic Scene {i+1}/4...")
         audio_file = f"voice_{i}.mp3"
         img_file = f"image_{i}.jpg"
         clip_file = f"clip_{i}.mp4"
@@ -70,22 +82,15 @@ async def generate_short(strong_title, original_topic):
         await generate_voice(part["text"], audio_file)
         await asyncio.to_thread(get_ai_image, part["prompt"], img_file)
         
-        # This FFmpeg command builds the infographic:
-        # 1. Darkens and slowly zooms the background image.
-        # 2. Creates a real-time animated frequency bar chart (infographic) reacting to the voice.
-        # 3. Creates a continuous waveform line at the bottom.
-        # 4. Overlays the text, bars, and waveform onto the moving background.
         ffmpeg_cmd = [
             "ffmpeg", "-y", "-loop", "1", "-i", img_file, "-i", audio_file,
             "-filter_complex", 
-            f"[0:v]zoompan=z='min(zoom+0.0015,1.5)':d=300:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',scale=1080:1920,colorlevels=romax=0.4:gomax=0.4:bomax=0.4[bg];"
-            f"[1:a]showfreqs=s=1080x500:mode=bar:colors=0x00FF99:ascale=log[barchart];"
-            f"[1:a]showwaves=s=1080x200:mode=cline:colors=0x00FFFF[wave];"
-            f"[bg][barchart]overlay=0:H/2-250[v1];"
-            f"[v1][wave]overlay=0:H-300[v2];"
-            f"[v2]drawtext=text='{strong_title}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.2[outv]",
+            f"[0:v]scale=1080:1920,zoompan=z='min(zoom+0.0015,1.5)':d=300:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=24,colorlevels=romax=0.5:gomax=0.5:bomax=0.5[bg];"
+            f"[1:a]showwaves=s=1080x250:mode=cline:colors=0x00FF99[wave];"
+            f"[bg][wave]overlay=0:H-350[v1];"
+            f"[v1]drawtext=text='{strong_title}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.2[outv]",
             "-map", "[outv]", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "ultrafast",
+            "-c:v", "libx264", "-preset", "ultrafast", "-threads", "2",
             "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest", clip_file
         ]
         subprocess.run(ffmpeg_cmd, check=True)
