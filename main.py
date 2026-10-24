@@ -49,15 +49,13 @@ async def generate_voice(text, filename):
 
 def get_ai_image(prompt, filename):
     seed = random.randint(1, 999999)
-    # Slicing the prompt ensures the URL does not become too long and cause a server rejection
     safe_prompt = urllib.parse.quote(f"Vertical 9:16, {prompt[:150]}, highly detailed, 8k")
     image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1080&height=1920&nologo=true&model=flux&seed={seed}"
     
     try:
         response = requests.get(image_url, timeout=30)
-        response.raise_for_status() # Force exception on 404/500 errors
+        response.raise_for_status() 
         
-        # Verify the returned content is actually an image before writing it
         if 'image' not in response.headers.get('Content-Type', ''):
             raise ValueError("API returned non-image data")
             
@@ -66,7 +64,6 @@ def get_ai_image(prompt, filename):
             
     except Exception as e:
         print(f"Image fetch failed ({e}). Using synthetic fallback.")
-        # Generates a valid deep blue solid color JPEG so FFmpeg doesn't crash
         subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=0x080814:s=1080x1920", "-vframes", "1", filename], check=True)
 
 async def generate_short(strong_title, original_topic):
