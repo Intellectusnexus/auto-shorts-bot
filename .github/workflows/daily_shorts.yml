@@ -2,8 +2,8 @@ name: Auto YouTube Shorts Bot
 
 on:
   schedule:
-    - cron: '0 5 * * *'  # 10:30 AM IST
-    - cron: '0 14 * * *' # 7:30 PM IST
+    - cron: '0 5 * * *'  
+    - cron: '0 14 * * *' 
   workflow_dispatch: 
 
 jobs:
@@ -31,5 +31,6 @@ jobs:
         YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
         YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        FAL_KEY: ${{ secrets.FAL_KEY }}
       run: python main.py
       
