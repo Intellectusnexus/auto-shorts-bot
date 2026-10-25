@@ -1,15 +1,19 @@
 name: Auto YouTube Shorts Bot
 
 on:
+  push:
+    branches:
+      - main # (Change to 'master' if your default branch is named master)
   schedule:
-    - cron: '0 5 * * *'  
-    - cron: '0 14 * * *' 
+    # Offset by 15 minutes to bypass GitHub's top-of-the-hour bottlenecks
+    - cron: '15 5 * * *'  # Runs at 10:45 AM IST
+    - cron: '15 14 * * *' # Runs at 7:45 PM IST
   workflow_dispatch: 
 
 jobs:
   generate-and-upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 
+    timeout-minutes: 10 
 
     steps:
     - name: Checkout repository
@@ -32,6 +36,5 @@ jobs:
         YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
         YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-        FAL_KEY: ${{ secrets.FAL_KEY }}
       run: python main.py
       
