@@ -27,10 +27,9 @@ def fetch_trending_topic_and_download(youtube):
 
     print("Searching YouTube API for the highest hit shorts from the past 7 days...")
     
-    # Calculate exactly 7 days ago in ISO 8601 format required by YouTube API
-    seven_days_ago = (datetime.datetime.utcnow() - datetime.timedelta(days=7)).isoformat() + 'Z'
+    # Fixed Python 3.12 timezone warning
+    seven_days_ago = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=7)).isoformat().replace("+00:00", "Z")
     
-    # Use the official API to guarantee we find the top viewed short reliably
     request = youtube.search().list(
         part="snippet",
         q="movie recap #shorts",
@@ -52,9 +51,10 @@ def fetch_trending_topic_and_download(youtube):
     
     print(f"Target Acquired: {original_title} ({target_url})")
     
-    # yt-dlp now only handles the direct download, avoiding search blocks
+    # Added the Android extractor argument to bypass BotGuard checks
     download_cmd = [
         "yt-dlp",
+        "--extractor-args", "youtube:player_client=android",
         "--max-downloads", "1",
         "--merge-output-format", "mp4",
         "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
@@ -71,12 +71,10 @@ def process_remix_clip(input_file, title):
     if os.path.exists(output_file):
         os.remove(output_file)
         
-    # Remove emojis and special characters for clean rendering
     clean_text = re.sub(r'[^\w\s]', '', title)[:40]
     
     print("Extracting a short action clip and applying overlays...")
     
-    # Extract 12 seconds starting from the 5-second mark
     filter_string = (
         "eq=brightness=0.08:contrast=1.3:saturation=1.4,"
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
