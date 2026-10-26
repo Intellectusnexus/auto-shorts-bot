@@ -1,12 +1,5 @@
 import os
-import time
-import requests
-import random
-import urllib.parse
-import edge_tts
-import asyncio
 import subprocess
-import re
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
@@ -25,94 +18,59 @@ def get_youtube_service():
         creds.refresh(Request())
     return build("youtube", "v3", credentials=creds)
 
-def get_trending_data(youtube):
-    try:
-        request = youtube.videos().list(part="snippet", chart="mostPopular", regionCode="IN", maxResults=10)
-        response = request.execute()
-        selected = random.choice(response["items"][:5])
+def download_trending_short():
+    output_file = "downloaded_short.mp4"
+    if os.path.exists(output_file):
+        os.remove(output_file)
         
-        original_title = selected["snippet"]["title"]
-        
-        # Sanitize text for FFmpeg: strip emojis and replace colons
-        clean_title = re.sub(r'[^\x00-\x7F]+', '', original_title)
-        clean_title = clean_title.replace("'", "").replace(":", "-").strip()
-        
-        strong_title = clean_title[:70] + ("..." if len(clean_title) > 70 else "")
-        return strong_title, original_title, ["#trending", "#viral", "#shorts"], "24"
-    except Exception:
-        return "The craziest viral moment of the week", "viral trending topic", ["#trending", "#viral"], "24"
-
-def get_explainer_script(strong_title, original_topic):
-    return [
-        {"text": f"Everyone is talking about {strong_title}.", "prompt": f"Cinematic wide shot, {original_topic}, epic lighting"},
-        {"text": "But most people completely missed the craziest detail hidden in plain sight.", "prompt": f"Close up, mysterious hidden detail about {original_topic}, glowing"},
-        {"text": "When you look closely, it completely changes how you see the whole thing.", "prompt": f"Mind blowing revelation, {original_topic}, dramatic shadows"},
-        {"text": "What do you actually think about this? Drop a comment and subscribe for more.", "prompt": f"Cyberpunk glitch, hacker matrix, neon lights"}
+    # Search query targeting a free vertical movie short under 90 seconds using yt-dlp
+    search_query = "ytsearch1:movie recap #shorts"
+    
+    download_cmd = [
+        "yt-dlp",
+        "--restrict-filenames",
+        "--match-filter", "duration < 90",
+        "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
+        "-o", output_file,
+        search_query
     ]
+    subprocess.run(download_cmd, check=True)
+    return output_file
 
-async def generate_voice(text, filename):
-    communicate = edge_tts.Communicate(text, voice="en-IN-NeerjaNeural", rate="+15%")
-    await communicate.save(filename)
-
-def get_ai_image(prompt, filename):
-    seed = random.randint(1, 999999)
-    safe_prompt = urllib.parse.quote(f"Vertical 9:16, {prompt[:150]}, highly detailed, 8k")
-    image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1080&height=1920&nologo=true&model=flux&seed={seed}"
+def process_video(input_file):
+    output_file = "final_short.mp4"
+    if os.path.exists(output_file):
+        os.remove(output_file)
+        
+    # Apply high brightness, contrast, saturation filters and ensure 9:16 vertical scaling using ultrafast preset
+    filter_string = "eq=brightness=0.08:contrast=1.35:saturation=1.5,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
     
-    try:
-        response = requests.get(image_url, timeout=30)
-        response.raise_for_status() 
-        
-        if 'image' not in response.headers.get('Content-Type', ''):
-            raise ValueError("API returned non-image data")
-            
-        with open(filename, "wb") as f:
-            f.write(response.content)
-            
-    except Exception as e:
-        print(f"Image fetch failed ({e}). Using synthetic fallback.")
-        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=0x080814:s=1080x1920", "-vframes", "1", filename], check=True)
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", input_file,
+        "-vf", filter_string,
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        output_file
+    ]
+    subprocess.run(ffmpeg_cmd, check=True)
+    return output_file
 
-async def generate_short(strong_title, original_topic):
-    script_parts = get_explainer_script(strong_title, original_topic)
-    clips = []
+def upload_video(youtube, video_file):
+    title = "Best Movie Recap Moment #shorts #trending"
+    hashtags = ["#trending", "#viral", "#shorts", "#movierecap"]
+    full_title = f"{title} {' '.join(hashtags)}"[:97] + "..."
     
-    for i, part in enumerate(script_parts):
-        print(f"Generating Optimized Infographic Scene {i+1}/4...")
-        audio_file = f"voice_{i}.mp3"
-        img_file = f"image_{i}.jpg"
-        clip_file = f"clip_{i}.mp4"
-        
-        await generate_voice(part["text"], audio_file)
-        await asyncio.to_thread(get_ai_image, part["prompt"], img_file)
-        
-        ffmpeg_cmd = [
-            "ffmpeg", "-y", "-loop", "1", "-i", img_file, "-i", audio_file,
-            "-filter_complex", 
-            f"[0:v]scale=1080:1920,zoompan=z='min(zoom+0.0015,1.5)':d=300:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=24,colorlevels=romax=0.5:gomax=0.5:bomax=0.5[bg];"
-            f"[1:a]showwaves=s=1080x250:mode=cline:colors=0x00FF99[wave];"
-            f"[bg][wave]overlay=0:H-350[v1];"
-            f"[v1]drawtext=text='{strong_title}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.2[outv]",
-            "-map", "[outv]", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "ultrafast", "-threads", "2",
-            "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest", clip_file
-        ]
-        subprocess.run(ffmpeg_cmd, check=True)
-        clips.append(clip_file)
-
-    print("Stitching scenes...")
-    with open("concat.txt", "w") as f:
-        for clip in clips:
-            f.write(f"file '{clip}'\n")
-            
-    final_output = "explainer_short.mp4"
-    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "concat.txt", "-c", "copy", final_output], check=True)
-    return final_output
-
-def upload_video(youtube, video_file, title, hashtags, category_id):
-    full_title = (f"{title} {' '.join(hashtags)}")[:97] + "..."
     body = {
-        "snippet": {"title": full_title, "description": f"{title}\n\n{' '.join(hashtags)}", "tags": [h.strip("#") for h in hashtags], "categoryId": category_id},
+        "snippet": {
+            "title": full_title, 
+            "description": f"Top trending movie moment recap.\n\n{' '.join(hashtags)}", 
+            "tags": [h.strip("#") for h in hashtags], 
+            "categoryId": "24"
+        },
         "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
     }
     media = MediaFileUpload(video_file, chunksize=1024*1024, resumable=True, mimetype="video/mp4")
@@ -125,7 +83,11 @@ def upload_video(youtube, video_file, title, hashtags, category_id):
 
 if __name__ == "__main__":
     youtube = get_youtube_service()
-    strong_title, original_topic, hashtags, category_id = get_trending_data(youtube)
-    video_path = asyncio.run(generate_short(strong_title, original_topic))
-    upload_video(youtube, video_path, strong_title, hashtags, category_id)
+    print("Downloading trending vertical movie short...")
+    raw_video = download_trending_short()
+    print("Processing and enhancing video filters...")
+    final_video = process_video(raw_video)
+    print("Uploading to YouTube...")
+    upload_video(youtube, final_video)
+    print("Done!")
     
