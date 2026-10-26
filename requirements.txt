@@ -4,4 +4,4 @@ google-auth-oauthlib
 google-auth-httplib2
 requests
 edge-tts
-fal-client
+yt-dlp
