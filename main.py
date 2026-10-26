@@ -1,7 +1,7 @@
 import os
 import subprocess
-import json
 import re
+import datetime
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
@@ -20,46 +20,39 @@ def get_youtube_service():
         creds.refresh(Request())
     return build("youtube", "v3", credentials=creds)
 
-def fetch_trending_topic_and_download():
-    # Clean up old files
+def fetch_trending_topic_and_download(youtube):
     for f in os.listdir("."):
         if f.startswith("raw_video"):
             os.remove(f)
 
-    print("Searching for the highest hit shorts from the past 7 days...")
-    search_query = "ytsearch15:trending movie shorts"
+    print("Searching YouTube API for the highest hit shorts from the past 7 days...")
     
-    info_cmd = [
-        "yt-dlp",
-        "--dateafter", "today-7days",
-        "--match-filter", "duration < 90",
-        "--dump-json",
-        search_query
-    ]
+    # Calculate exactly 7 days ago in ISO 8601 format required by YouTube API
+    seven_days_ago = (datetime.datetime.utcnow() - datetime.timedelta(days=7)).isoformat() + 'Z'
     
-    result = subprocess.run(info_cmd, capture_output=True, text=True)
-    videos = []
+    # Use the official API to guarantee we find the top viewed short reliably
+    request = youtube.search().list(
+        part="snippet",
+        q="movie recap #shorts",
+        type="video",
+        videoDuration="short",
+        publishedAfter=seven_days_ago,
+        order="viewCount",
+        maxResults=10
+    )
+    response = request.execute()
     
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-            videos.append(data)
-        except Exception:
-            pass
-            
-    if not videos:
+    if not response.get("items"):
         raise ValueError("No trending videos found in the search scope.")
         
-    # Rank by view count to find the most viral hit
-    top_video = sorted(videos, key=lambda x: x.get("view_count", 0), reverse=True)[0]
+    top_video = response["items"][0]
+    video_id = top_video["id"]["videoId"]
+    original_title = top_video["snippet"]["title"]
+    target_url = f"https://www.youtube.com/watch?v={video_id}"
     
-    target_url = top_video.get("webpage_url")
-    original_title = top_video.get("title", "Trending Movie Highlight")
+    print(f"Target Acquired: {original_title} ({target_url})")
     
-    print(f"Target Acquired: {original_title}")
-    
+    # yt-dlp now only handles the direct download, avoiding search blocks
     download_cmd = [
         "yt-dlp",
         "--max-downloads", "1",
@@ -83,8 +76,7 @@ def process_remix_clip(input_file, title):
     
     print("Extracting a short action clip and applying overlays...")
     
-    # Skip the first 5 seconds and extract exactly 12 seconds of action
-    # Scale to vertical and stamp the trending title on the screen
+    # Extract 12 seconds starting from the 5-second mark
     filter_string = (
         "eq=brightness=0.08:contrast=1.3:saturation=1.4,"
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
@@ -137,7 +129,7 @@ def upload_to_youtube(youtube, video_file, original_title):
 
 if __name__ == "__main__":
     youtube = get_youtube_service()
-    raw_video, orig_title = fetch_trending_topic_and_download()
+    raw_video, orig_title = fetch_trending_topic_and_download(youtube)
     final_video = process_remix_clip(raw_video, orig_title)
     print("Uploading remixed clip to YouTube...")
     upload_to_youtube(youtube, final_video, orig_title)
