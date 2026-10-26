@@ -5,9 +5,8 @@ on:
     branches:
       - main 
   schedule:
-    # Runs twice a day automatically on GitHub's cloud servers
-    - cron: '15 5 * * *'  # Morning run
-    - cron: '15 14 * * *' # Evening run
+    - cron: '15 5 * * *'  
+    - cron: '15 14 * * *' 
   workflow_dispatch: 
 
 jobs:
@@ -17,13 +16,13 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - name: Set up Python 3.12 & Enable Caching
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
-        cache: 'pip'
+        python-version: '3.12'
+        cache: 'pip' # This single line prevents re-downloading dependencies every run
 
     - name: Install FFmpeg with full codecs
       run: sudo apt-get update && sudo apt-get install -y ffmpeg libavcodec-extra
