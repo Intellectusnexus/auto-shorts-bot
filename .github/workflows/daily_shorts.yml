@@ -15,17 +15,23 @@ jobs:
     timeout-minutes: 10 
 
     steps:
+    # Uses v4 to clear the Node.js deprecation warning
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    # Uses v5 to clear the Node.js deprecation warning
     - name: Set up Python 3.12 & Enable Caching
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
         cache: 'pip' 
 
-    - name: Install FFmpeg
-      run: sudo apt-get update && sudo apt-get install -y ffmpeg libavcodec-extra
+    # We now install Deno alongside FFmpeg so yt-dlp can solve YouTube's bot challenges
+    - name: Install System Dependencies (FFmpeg & Deno)
+      run: |
+        sudo apt-get update && sudo apt-get install -y ffmpeg libavcodec-extra
+        curl -fsSL https://deno.land/install.sh | sh
+        echo "$HOME/.deno/bin" >> $GITHUB_PATH
 
     - name: Install Python Dependencies
       run: pip install -r requirements.txt
