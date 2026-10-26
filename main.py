@@ -1,5 +1,7 @@
 import os
 import subprocess
+import json
+import re
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
@@ -8,54 +10,92 @@ from google.auth.transport.requests import Request
 def get_youtube_service():
     creds = Credentials(
         token=None,
-        refresh_token=os.environ["YT_REFRESH_TOKEN"],
+        refresh_token=os.environ.get("YT_REFRESH_TOKEN"),
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.environ["YT_CLIENT_ID"],
-        client_secret=os.environ["YT_CLIENT_SECRET"],
+        client_id=os.environ.get("YT_CLIENT_ID"),
+        client_secret=os.environ.get("YT_CLIENT_SECRET"),
         scopes=["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
     )
     if not creds.valid:
         creds.refresh(Request())
     return build("youtube", "v3", credentials=creds)
 
-def download_trending_short():
-    # Clean up old files from previous runs
+def fetch_trending_topic_and_download():
+    # Clean up old files
     for f in os.listdir("."):
-        if f.startswith("downloaded_short"):
+        if f.startswith("raw_video"):
             os.remove(f)
 
-    # Search top 15 results to guarantee we find one under 90 seconds
-    search_query = "ytsearch15:movie recap #shorts"
+    print("Searching for the highest hit shorts from the past 7 days...")
+    search_query = "ytsearch15:trending movie shorts"
+    
+    info_cmd = [
+        "yt-dlp",
+        "--dateafter", "today-7days",
+        "--match-filter", "duration < 90",
+        "--dump-json",
+        search_query
+    ]
+    
+    result = subprocess.run(info_cmd, capture_output=True, text=True)
+    videos = []
+    
+    for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            videos.append(data)
+        except Exception:
+            pass
+            
+    if not videos:
+        raise ValueError("No trending videos found in the search scope.")
+        
+    # Rank by view count to find the most viral hit
+    top_video = sorted(videos, key=lambda x: x.get("view_count", 0), reverse=True)[0]
+    
+    target_url = top_video.get("webpage_url")
+    original_title = top_video.get("title", "Trending Movie Highlight")
+    
+    print(f"Target Acquired: {original_title}")
     
     download_cmd = [
         "yt-dlp",
-        "--match-filter", "duration < 90",
         "--max-downloads", "1",
         "--merge-output-format", "mp4",
         "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
-        "-o", "downloaded_short.%(ext)s",
-        search_query
+        "-o", "raw_video.%(ext)s",
+        target_url
     ]
     subprocess.run(download_cmd, check=True)
+    
+    downloaded_files = [f for f in os.listdir(".") if f.startswith("raw_video.")]
+    return downloaded_files[0], original_title
 
-    # Dynamically find the file yt-dlp just created
-    downloaded_files = [f for f in os.listdir(".") if f.startswith("downloaded_short")]
-    if not downloaded_files:
-        raise FileNotFoundError("[!] yt-dlp failed to find any shorts under 90 seconds.")
-        
-    return downloaded_files[0]
-
-def process_video(input_file):
-    output_file = "final_short.mp4"
+def process_remix_clip(input_file, title):
+    output_file = "final_remix.mp4"
     if os.path.exists(output_file):
         os.remove(output_file)
         
-    # Apply high brightness, contrast, saturation filters and ensure 9:16 vertical scaling
-    filter_string = "eq=brightness=0.08:contrast=1.35:saturation=1.5,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+    # Remove emojis and special characters for clean rendering
+    clean_text = re.sub(r'[^\w\s]', '', title)[:40]
+    
+    print("Extracting a short action clip and applying overlays...")
+    
+    # Skip the first 5 seconds and extract exactly 12 seconds of action
+    # Scale to vertical and stamp the trending title on the screen
+    filter_string = (
+        "eq=brightness=0.08:contrast=1.3:saturation=1.4,"
+        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        f"drawtext=text='{clean_text}':fontcolor=white:fontsize=72:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h*0.15"
+    )
     
     ffmpeg_cmd = [
         "ffmpeg",
         "-y",
+        "-ss", "00:00:05",
+        "-t", "12",
         "-i", input_file,
         "-vf", filter_string,
         "-c:v", "libx264",
@@ -67,15 +107,21 @@ def process_video(input_file):
     subprocess.run(ffmpeg_cmd, check=True)
     return output_file
 
-def upload_video(youtube, video_file):
-    title = "Best Movie Recap Moment #shorts #trending"
-    hashtags = ["#trending", "#viral", "#shorts", "#movierecap"]
-    full_title = f"{title} {' '.join(hashtags)}"[:97] + "..."
+def upload_to_youtube(youtube, video_file, original_title):
+    clean_title = re.sub(r'[^\w\s]', '', original_title)
+    words = clean_title.split()
+    keywords = " ".join(words[:5])
     
+    hashtags = ["#shorts", "#trending", "#viral"]
+    final_title = f"{keywords} {' '.join(hashtags)}"
+    
+    if len(final_title) > 100:
+        final_title = final_title[:95] + "..."
+        
     body = {
         "snippet": {
-            "title": full_title, 
-            "description": f"Top trending movie moment recap.\n\n{' '.join(hashtags)}", 
+            "title": final_title, 
+            "description": f"Trending topic highlight.\n\n{' '.join(hashtags)}", 
             "tags": [h.strip("#") for h in hashtags], 
             "categoryId": "24"
         },
@@ -87,15 +133,13 @@ def upload_video(youtube, video_file):
     response = None
     while response is None:
         status, response = request.next_chunk()
-    return response["id"]
+    return response.get("id")
 
 if __name__ == "__main__":
     youtube = get_youtube_service()
-    print("Downloading trending vertical movie short...")
-    raw_video = download_trending_short()
-    print("Processing and enhancing video filters...")
-    final_video = process_video(raw_video)
-    print("Uploading to YouTube...")
-    upload_video(youtube, final_video)
-    print("Done!")
+    raw_video, orig_title = fetch_trending_topic_and_download()
+    final_video = process_remix_clip(raw_video, orig_title)
+    print("Uploading remixed clip to YouTube...")
+    upload_to_youtube(youtube, final_video, orig_title)
+    print("Workflow Complete.")
     
