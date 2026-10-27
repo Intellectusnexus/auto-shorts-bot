@@ -5,16 +5,16 @@ from datetime import datetime
 import feedparser
 from duckduckgo_search import DDGS
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import ImageClip, concatenate_videoclips
+from moviepy import ImageClip, concatenate_videoclips
 import googleapiclient.discovery
 import googleapiclient.http
 from google.oauth2.credentials import Credentials
 
 def get_trends():
-    url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=IN"
+    url = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
     feed = feedparser.parse(url)
-    titles = [entry.title for entry in feed.entries]
-    return titles
+    titles = [entry.title.split(" - ")[0] for entry in feed.entries]
+    return titles[:5]
 
 def clean_tag(text):
     clean = re.sub(r'[^a-zA-Z0-9]', '', text)
@@ -96,6 +96,9 @@ def main():
         
     topic = trends[0]
     tag_trends = trends[1:4]
+    if len(tag_trends) < 3:
+        print("Not enough tags found.")
+        return
     
     hashtags = clean_tag(tag_trends[0]) + " " + clean_tag(tag_trends[1]) + " " + clean_tag(tag_trends[2])
     base_title = f"Nobody is talking about {topic} "
@@ -107,20 +110,23 @@ def main():
     final_title = base_title + " " + hashtags
     print("Final Title:", final_title)
     
-    results = DDGS().images(topic, max_results=5)
-    image_files = []
-    
-    for i, res in enumerate(results):
-        try:
-            url = res["image"]
-            filename = f"image_{i}.jpg"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req) as response, open(filename, "wb") as out_file:
-                out_file.write(response.read())
-            prepare_image(filename)
-            image_files.append(filename)
-        except Exception as e:
-            print("Failed to get image:", e)
+    try:
+        results = DDGS().images(topic, max_results=5)
+        image_files = []
+        for i, res in enumerate(results):
+            try:
+                url = res["image"]
+                filename = f"image_{i}.jpg"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=10) as response, open(filename, "wb") as out_file:
+                    out_file.write(response.read())
+                prepare_image(filename)
+                image_files.append(filename)
+            except Exception as e:
+                print("Failed to get image:", e)
+    except Exception as e:
+        print("DDGS search failed:", e)
+        return
             
     if len(image_files) < 2:
         print("Not enough images saved.")
@@ -131,10 +137,10 @@ def main():
     
     clips = []
     for img in image_files:
-        clip = ImageClip(img).set_duration(3)
+        clip = ImageClip(img).with_duration(3)
         clips.append(clip)
         
-    clips.append(ImageClip(image_files[0]).set_duration(3))
+    clips.append(ImageClip(image_files[0]).with_duration(3))
     
     video = concatenate_videoclips(clips, method="compose")
     video.write_videofile("final.mp4", fps=24, codec="libx264")
