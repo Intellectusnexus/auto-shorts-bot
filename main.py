@@ -1,134 +1,146 @@
 import os
-import subprocess
 import re
-import datetime
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+import urllib.request
+from datetime import datetime
+import feedparser
+from duckduckgo_search import DDGS
+from PIL import Image, ImageDraw, ImageFont
+from moviepy.editor import ImageClip, concatenate_videoclips
+import googleapiclient.discovery
+import googleapiclient.http
 from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
 
-def get_youtube_service():
-    creds = Credentials(
+def get_trends():
+    url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=IN"
+    feed = feedparser.parse(url)
+    titles = [entry.title for entry in feed.entries]
+    return titles
+
+def clean_tag(text):
+    clean = re.sub(r'[^a-zA-Z0-9]', '', text)
+    return "#" + clean.lower()
+
+def prepare_image(img_path):
+    img = Image.open(img_path).convert("RGB")
+    target_ratio = 1080 / 1920
+    w, h = img.size
+    ratio = w / h
+    if ratio > target_ratio:
+        new_w = int(h * target_ratio)
+        left = (w - new_w) / 2
+        img = img.crop((left, 0, left + new_w, h))
+    else:
+        new_h = int(w / target_ratio)
+        top = (h - new_h) / 2
+        img = img.crop((0, top, w, top + new_h))
+    
+    img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
+    img.save(img_path)
+
+def add_text_overlay(img_path, text):
+    img = Image.open(img_path)
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
+    except IOError:
+        font = ImageFont.load_default()
+    
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    
+    x = (1080 - text_w) / 2
+    y = 1920 - 300
+    
+    draw.rectangle([x - 20, y - 20, x + text_w + 20, y + text_h + 20], fill="black")
+    draw.text((x, y), text, font=font, fill="white")
+    img.save(img_path)
+
+def upload_video(file_path, title):
+    client_id = os.environ.get("YT_CLIENT_ID")
+    client_secret = os.environ.get("YT_CLIENT_SECRET")
+    refresh_token = os.environ.get("YT_REFRESH_TOKEN")
+    
+    credentials = Credentials(
         token=None,
-        refresh_token=os.environ.get("YT_REFRESH_TOKEN"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.environ.get("YT_CLIENT_ID"),
-        client_secret=os.environ.get("YT_CLIENT_SECRET"),
-        scopes=["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
-    )
-    if not creds.valid:
-        creds.refresh(Request())
-    return build("youtube", "v3", credentials=creds)
-
-def fetch_trending_topic_and_download(youtube):
-    for f in os.listdir("."):
-        if f.startswith("raw_video"):
-            os.remove(f)
-
-    print("Searching YouTube API for the highest hit shorts from the past 7 days...")
-    
-    seven_days_ago = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=7)).isoformat().replace("+00:00", "Z")
-    
-    request = youtube.search().list(
-        part="snippet",
-        q="movie recap #shorts",
-        type="video",
-        videoDuration="short",
-        publishedAfter=seven_days_ago,
-        order="viewCount",
-        maxResults=10
-    )
-    response = request.execute()
-    
-    if not response.get("items"):
-        raise ValueError("No trending videos found in the search scope.")
-        
-    top_video = response["items"][0]
-    video_id = top_video["id"]["videoId"]
-    original_title = top_video["snippet"]["title"]
-    target_url = f"https://www.youtube.com/watch?v={video_id}"
-    
-    print(f"Target Acquired: {original_title} ({target_url})")
-    
-    # Using 'ios' player client to bypass YouTube bot detection on cloud servers
-    download_cmd = [
-        "yt-dlp",
-        "--extractor-args", "youtube:player_client=ios",
-        "--max-downloads", "1",
-        "--merge-output-format", "mp4",
-        "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
-        "-o", "raw_video.%(ext)s",
-        target_url
-    ]
-    subprocess.run(download_cmd, check=True)
-    
-    downloaded_files = [f for f in os.listdir(".") if f.startswith("raw_video.")]
-    return downloaded_files[0], original_title
-
-def process_remix_clip(input_file, title):
-    output_file = "final_remix.mp4"
-    if os.path.exists(output_file):
-        os.remove(output_file)
-        
-    clean_text = re.sub(r'[^\w\s]', '', title)[:40]
-    
-    print("Extracting clip and applying high brightness, contrast, and saturation filters...")
-    
-    filter_string = (
-        "eq=brightness=0.08:contrast=1.3:saturation=1.4,"
-        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-        f"drawtext=text='{clean_text}':fontcolor=white:fontsize=72:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h*0.15"
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
+        token_uri="https://oauth2.googleapis.com/token"
     )
     
-    ffmpeg_cmd = [
-        "ffmpeg",
-        "-y",
-        "-ss", "00:00:05",
-        "-t", "12",
-        "-i", input_file,
-        "-vf", filter_string,
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        output_file
-    ]
-    subprocess.run(ffmpeg_cmd, check=True)
-    return output_file
-
-def upload_to_youtube(youtube, video_file, original_title):
-    clean_title = re.sub(r'[^\w\s]', '', original_title)
-    words = clean_title.split()
-    keywords = " ".join(words[:5])
+    youtube = googleapiclient.discovery.build("youtube", "v3", credentials=credentials)
     
-    hashtags = ["#shorts", "#trending", "#viral"]
-    final_title = f"{keywords} {' '.join(hashtags)}"
-    
-    if len(final_title) > 100:
-        final_title = final_title[:95] + "..."
-        
     body = {
         "snippet": {
-            "title": final_title, 
-            "description": f"Trending topic highlight.\n\n{' '.join(hashtags)}", 
-            "tags": [h.strip("#") for h in hashtags], 
+            "title": title,
+            "description": "Trending now. " + title,
             "categoryId": "24"
         },
-        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
+        "status": {
+            "privacyStatus": "public",
+            "selfDeclaredMadeForKids": False
+        }
     }
-    media = MediaFileUpload(video_file, chunksize=1024*1024, resumable=True, mimetype="video/mp4")
-    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     
-    response = None
-    while response is None:
-        status, response = request.next_chunk()
-    return response.get("id")
+    media = googleapiclient.http.MediaFileUpload(file_path, chunksize=-1, resumable=True, mimetype="video/mp4")
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+    response = request.execute()
+    print("Uploaded video ID:", response.get("id"))
+
+def main():
+    trends = get_trends()
+    if not trends:
+        print("No trends found.")
+        return
+        
+    topic = trends[0]
+    tag_trends = trends[1:4]
+    
+    hashtags = clean_tag(tag_trends[0]) + " " + clean_tag(tag_trends[1]) + " " + clean_tag(tag_trends[2])
+    base_title = f"Nobody is talking about {topic} "
+    
+    if len(base_title) + len(hashtags) > 100:
+        allowed = 100 - len(hashtags) - 1
+        base_title = base_title[:allowed]
+        
+    final_title = base_title + " " + hashtags
+    print("Final Title:", final_title)
+    
+    results = DDGS().images(topic, max_results=5)
+    image_files = []
+    
+    for i, res in enumerate(results):
+        try:
+            url = res["image"]
+            filename = f"image_{i}.jpg"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req) as response, open(filename, "wb") as out_file:
+                out_file.write(response.read())
+            prepare_image(filename)
+            image_files.append(filename)
+        except Exception as e:
+            print("Failed to get image:", e)
+            
+    if len(image_files) < 2:
+        print("Not enough images saved.")
+        return
+        
+    add_text_overlay(image_files[-1], "And that is exactly why...")
+    add_text_overlay(image_files[0], "...this trend is taking over!")
+    
+    clips = []
+    for img in image_files:
+        clip = ImageClip(img).set_duration(3)
+        clips.append(clip)
+        
+    clips.append(ImageClip(image_files[0]).set_duration(3))
+    
+    video = concatenate_videoclips(clips, method="compose")
+    video.write_videofile("final.mp4", fps=24, codec="libx264")
+    
+    upload_video("final.mp4", final_title)
 
 if __name__ == "__main__":
-    youtube = get_youtube_service()
-    raw_video, orig_title = fetch_trending_topic_and_download(youtube)
-    final_video = process_remix_clip(raw_video, orig_title)
-    print("Uploading remixed clip to YouTube...")
-    upload_to_youtube(youtube, final_video, orig_title)
-    print("Workflow Complete.")
+    main()
     
