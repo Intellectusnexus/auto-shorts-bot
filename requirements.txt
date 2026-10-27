@@ -1,6 +1,6 @@
-google-api-python-client
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-requests
-yt-dlp
+feedparser==6.0.11
+duckduckgo-search==6.3.2
+moviepy==1.0.3
+Pillow==9.5.0
+google-api-python-client==2.148.0
+google-auth-oauthlib==1.2.1
