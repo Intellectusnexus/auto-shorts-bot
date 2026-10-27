@@ -1,45 +1,38 @@
-name: Auto Trending Shorts Agent
+name: YouTube Shorts Automation
 
 on:
-  push:
-    branches:
-      - main 
   schedule:
-    - cron: '15 5 * * *'  
-    - cron: '15 14 * * *' 
-  workflow_dispatch: 
+    - cron: '25 6 * * *'
+    - cron: '25 13 * * *'
+    - cron: '25 15 * * *'
+  workflow_dispatch:
 
 jobs:
-  generate-and-upload:
+  build_and_upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 10 
-
     steps:
-    # Uses v4 to clear the Node.js deprecation warning
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    # Uses v5 to clear the Node.js deprecation warning
-    - name: Set up Python 3.12 & Enable Caching
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-        cache: 'pip' 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    # We now install Deno alongside FFmpeg so yt-dlp can solve YouTube's bot challenges
-    - name: Install System Dependencies (FFmpeg & Deno)
-      run: |
-        sudo apt-get update && sudo apt-get install -y ffmpeg libavcodec-extra
-        curl -fsSL https://deno.land/install.sh | sh
-        echo "$HOME/.deno/bin" >> $GITHUB_PATH
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-dejavu
 
-    - name: Install Python Dependencies
-      run: pip install -r requirements.txt
+      - name: Install Python Packages
+        run: |
+          pip install -r requirements.txt
 
-    - name: Run Auto Agent Script
-      env:
-        YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-        YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-        YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-      run: python main.py
-      
+      - name: Run Automation
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python main.py
+          
