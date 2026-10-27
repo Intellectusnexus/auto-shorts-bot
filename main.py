@@ -27,7 +27,6 @@ def fetch_trending_topic_and_download(youtube):
 
     print("Searching YouTube API for the highest hit shorts from the past 7 days...")
     
-    # Fixed Python 3.12 timezone warning
     seven_days_ago = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=7)).isoformat().replace("+00:00", "Z")
     
     request = youtube.search().list(
@@ -51,10 +50,10 @@ def fetch_trending_topic_and_download(youtube):
     
     print(f"Target Acquired: {original_title} ({target_url})")
     
-    # Added the Android extractor argument to bypass BotGuard checks
+    # Using 'ios' player client to bypass YouTube bot detection on cloud servers
     download_cmd = [
         "yt-dlp",
-        "--extractor-args", "youtube:player_client=android",
+        "--extractor-args", "youtube:player_client=ios",
         "--max-downloads", "1",
         "--merge-output-format", "mp4",
         "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
@@ -73,7 +72,7 @@ def process_remix_clip(input_file, title):
         
     clean_text = re.sub(r'[^\w\s]', '', title)[:40]
     
-    print("Extracting a short action clip and applying overlays...")
+    print("Extracting clip and applying high brightness, contrast, and saturation filters...")
     
     filter_string = (
         "eq=brightness=0.08:contrast=1.3:saturation=1.4,"
